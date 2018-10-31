@@ -118,6 +118,8 @@ func main() {
         svc := ssm.New(sess)
         cmd := aws.String(opts["cmd"])
         params["commands"] = append(params["commands"], cmd)
+        fmt.Println(fmt.Sprintf("Executing: %s", *cmd))
+
         r,_ := svc.SendCommand(&ssm.SendCommandInput{
             DocumentName: aws.String("AWS-RunShellScript"),
             InstanceIds: aws.StringSlice(instanceIds),
@@ -126,26 +128,28 @@ func main() {
         cmdId := r.Command.CommandId
         var instanceList []*string
         passed := 0
-
+        nopass := 0
         for {
             status, _ := svc.ListCommands(&ssm.ListCommandsInput{
                 CommandId: cmdId})
-
             if len(instanceList) == len(instanceIds) {
                 break
             }
 
             if *status.Commands[0].Status == "Success" {
+                fmt.Println(fmt.Sprintf("%s: cmd Success!", *status.Commands[0].InstanceIds[passed]))
+                instanceList = append(instanceList, status.Commands[0].InstanceIds[passed])
                 passed += 1
-                instanceList = append(instanceList, status.Commands[0].InstanceIds[0])
             } else if *status.Commands[0].Status == "TimedOut" || *status.Commands[0].Status == "Failed" || *status.Commands[0].Status == "Cancelled" {
-                instanceList = append(instanceList, status.Commands[0].InstanceIds[0])
+                instanceList = append(instanceList, status.Commands[0].InstanceIds[nopass])
+                nopass += 1
             }
         }
         if passed != len(instanceList) {
             fmt.Println(fmt.Sprintf("Error while executing: %s", *cmd))
-        } else if passed == len(instanceList) {
-            fmt.Println(fmt.Sprintf("Exec: %s Success!", *cmd))
+            for _, i := range instanceList{
+                fmt.Println(*i)
+            }
         }
     }
 }
