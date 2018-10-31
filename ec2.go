@@ -3,6 +3,7 @@ package main
 import (
     "github.com/aws/aws-sdk-go/aws"
     "github.com/aws/aws-sdk-go/service/ec2"
+    "github.com/aws/aws-sdk-go/service/ssm"
     "github.com/aws/aws-sdk-go/aws/session"
     "strings"
     "flag"
@@ -33,7 +34,7 @@ func parseOpts() map[string]string {
 
     flag.StringVar(&awsProfile, "profile", "", "Your AWS profile for creds")
     flag.StringVar(&awsRegion, "region", "", "Your AWS region")
-    flag.StringVar(&tag, "exec", "", "shell cmd to exec")
+    flag.StringVar(&exec, "exec", "", "shell cmd to exec")
     flag.StringVar(&tag, "tag", "", "Host tag")
     list = flag.Bool("list", false, "List host by tags")
     flag.Parse()
@@ -57,32 +58,28 @@ func parseOpts() map[string]string {
     return opts
 }
 
-func tagsInput(key, value string) *ec2.DescribeTagsInput {
-    input := &ec2.DescribeTagsInput{
+func instancesInput(key, value string) *ec2.DescribeInstancesInput {
+    input := &ec2.DescribeInstancesInput{
         Filters: []*ec2.Filter{
             {
-                Name: aws.String("key"),
-                Values: []*string{aws.String(key)},
+                Name: aws.String(fmt.Sprintf("tag:%s", key)),
+                Values: []*string{aws.String(value)},
             },
             {
-                Name: aws.String("value"),
-                Values: []*string{aws.String(value)},
+                Name: aws.String("instance-state-name"),
+                Values: []*string{aws.String("running")},
             },
         },
     }
     return input
 }
 
-func getInstanceIds(s *session.Session, input *ec2.DescribeTagsInput) []string {
+func listInstances(s *session.Session, input *ec2.DescribeInstancesInput) *ec2.DescribeInstancesOutput {
     svc := ec2.New(s)
-    resp, err := svc.DescribeTags(input)
+    resp, err := svc.DescribeInstances(input)
     errorCheck(err)
 
-    var instanceIds []string
-    for _, data := range resp.Tags {
-        instanceIds = append(instanceIds, *data.ResourceId)
-    }
-    return instanceIds
+    return resp
 }
 
 func getSession(region string) *session.Session {
@@ -99,11 +96,56 @@ func main() {
     k, v := t[0], t[1]
 
     sess := getSession(opts["region"])
-    svc := ec2.New(sess)
-    input := tagsInput(k,v)
+    input := instancesInput(k,v)
+    instances := listInstances(sess,input)
 
     if opts["op"] == "list" {
-        instanceIds := getInstanceIds(svc,input)
-        //fmt.Println(instanceIds)
+        for _, i := range instances.Reservations {
+            for _, data := range i.Instances {
+                fmt.Println(*data.PrivateIpAddress)
+            }
+        }
+    } else if opts["op"] == "exec" {
+        var instanceIds []string
+        params := make(map[string][]*string)
+
+        for _, i := range instances.Reservations {
+            for _, data := range i.Instances {
+                instanceIds = append(instanceIds, *data.InstanceId)
+            }
+        }
+
+        svc := ssm.New(sess)
+        cmd := aws.String(opts["cmd"])
+        params["commands"] = append(params["commands"], cmd)
+        r,_ := svc.SendCommand(&ssm.SendCommandInput{
+            DocumentName: aws.String("AWS-RunShellScript"),
+            InstanceIds: aws.StringSlice(instanceIds),
+            Parameters: params})
+
+        cmdId := r.Command.CommandId
+        var instanceList []*string
+        passed := 0
+
+        for {
+            status, _ := svc.ListCommands(&ssm.ListCommandsInput{
+                CommandId: cmdId})
+
+            if len(instanceList) == len(instanceIds) {
+                break
+            }
+
+            if *status.Commands[0].Status == "Success" {
+                passed += 1
+                instanceList = append(instanceList, status.Commands[0].InstanceIds[0])
+            } else if *status.Commands[0].Status == "TimedOut" || *status.Commands[0].Status == "Failed" || *status.Commands[0].Status == "Cancelled" {
+                instanceList = append(instanceList, status.Commands[0].InstanceIds[0])
+            }
+        }
+        if passed != len(instanceList) {
+            fmt.Println(fmt.Sprintf("Error while executing: %s", *cmd))
+        } else if passed == len(instanceList) {
+            fmt.Println(fmt.Sprintf("Exec: %s Success!", *cmd))
+        }
     }
 }
