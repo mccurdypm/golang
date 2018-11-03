@@ -16,8 +16,8 @@ import (
 )
 
 type DashParams struct {
-	UID      string `json:"uid"`
-	AsgPanel string `json:"asgPanel"`
+    UID      string `json:"uid"`
+    AsgPanel string `json:"asgPanel"`
 }
 
 func errorCheck(err error) {
@@ -34,47 +34,38 @@ func getSession(region string) *session.Session {
     return sess
 }
 
-func dashboard(status, region string, params DashParams, data ...map[string]interface{}) map[string]interface{} {
+func dashboard(status, region string, apiKey *ssm.GetParameterOutput,  params DashParams, data ...map[string]interface{}) map[string]interface{} {
     grafanaUrl := "https://dashboard:3000"
     var result map[string]interface{}
+    httpClient := &http.Client{}
+    var method string
+    var path string
+    var a string
 
     if status == "get" {
-        httpClient := &http.Client{}
-        urlPath := fmt.Sprintf("%s/api/dashboards/uid/%s", grafanaUrl, params.UID)
-        request, err := http.NewRequest("GET", urlPath, nil)
-        errorCheck(err)
-
-        request.Header.Set("Accept", "application/json")
-        request.Header.Set("Content-Type", "application/json")
-        response, err := httpClient.Do(request)
-        errorCheck(err)
-
-        defer response.Body.Close()
-        body,_ := ioutil.ReadAll(response.Body)
-        json.Unmarshal(body, &result)
-        errorCheck(err)
+        path = fmt.Sprintf("%s/api/dashboards/uid/%s", grafanaUrl, params.UID)
+        method = "GET"
     } else if status == "update"{
-        httpClient := &http.Client{}
+        path = fmt.Sprintf("%s/api/dashboards/db", grafanaUrl)
         b,_ := json.Marshal(data)
-        a := strings.Trim(string(b), "[]") // strip [] from json obj
-
-        urlPath := fmt.Sprintf("%s/api/dashboards/db", grafanaUrl)
-        request, err := http.NewRequest("POST", urlPath, bytes.NewBuffer([]byte(a)))
-        errorCheck(err)
-
-        apiKey := getKey() // paramStore in us-west-2, secureString
-        authHeader := fmt.Sprintf("Bearer %s", *apiKey.Parameter.Value)
-        request.Header.Set("Accept", "application/json")
-        request.Header.Set("Content-Type", "application/json")
-        request.Header.Set("Authorization", authHeader)
-        response, err := httpClient.Do(request)
-        errorCheck(err)
-
-        defer response.Body.Close()
-        body,_ := ioutil.ReadAll(response.Body)
-        json.Unmarshal(body, &result)
-        errorCheck(err)
+        a = strings.Trim(string(b), "[]") // strip [] from json obj
+        method = "POST"
     }
+    dataBuffer := bytes.NewBuffer([]byte(a))
+    urlPath := fmt.Sprintf(path)
+    request, err := http.NewRequest(method, urlPath, dataBuffer)
+    errorCheck(err)
+
+    authHeader := fmt.Sprintf("Bearer %s", *apiKey.Parameter.Value)
+    request.Header.Set("Authorization", authHeader)
+    request.Header.Set("Accept", "application/json")
+    request.Header.Set("Content-Type", "application/json")
+    response, err := httpClient.Do(request)
+    errorCheck(err)
+
+    defer response.Body.Close()
+    body,_ := ioutil.ReadAll(response.Body)
+    json.Unmarshal(body, &result)
     return result
 }
 
@@ -134,7 +125,8 @@ func main(){
     sess := getSession(region)
     params := getDashboardParams(sess)
     newAsg := cfStack(sess)
-    result := dashboard("get", region, params)
+    apiKey := getKey()
+    result := dashboard("get", region, apiKey, params)
     panels := result["dashboard"].(map[string]interface{})["panels"]
 
     for i,_ := range panels.([]interface{}) {
@@ -144,6 +136,6 @@ func main(){
         }
     }
     result["dashboard"].(map[string]interface{})["panels"] = panels
-    update := dashboard("update", region, params, result)
+    update := dashboard("update", region, apiKey, params, result)
     fmt.Println(fmt.Sprintf("Updating %s: %s", region, update["status"]))
 }
