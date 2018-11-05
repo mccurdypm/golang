@@ -61,7 +61,7 @@ type GetDetails struct {
             } `json:"styles,omitempty"`
             Targets []struct {
                 Dimensions struct {
-                    AutoScalingGroupName    string  `json:"AutoScalingGroupName",omitempty`
+                    AutoScalingGroupName    string  `json:"AutoScalingGroupName,omitempty"`
                 } `json:"dimensions,omitempty"`
                 HighResolution bool     `json:"highResolution"`
                 MetricName     string   `json:"metricName"`
