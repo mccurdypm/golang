@@ -38,9 +38,7 @@ func dashboard(status, region string, apiKey *ssm.GetParameterOutput,  params Da
     grafanaUrl := "https://dashboard:3000"
     var result map[string]interface{}
     httpClient := &http.Client{}
-    var method string
-    var path string
-    var a string
+    var method, path, a string
 
     if status == "get" {
         path = fmt.Sprintf("%s/api/dashboards/uid/%s", grafanaUrl, params.UID)
